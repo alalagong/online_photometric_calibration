@@ -1,3 +1,7 @@
+Online_photometric_calibration注释版本
+> by gong
+
+---
 # Online Photometric Calibration
 
 Recent direct visual odometry and SLAM algorithms have demonstrated
