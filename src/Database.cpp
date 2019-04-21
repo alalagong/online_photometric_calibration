@@ -14,7 +14,7 @@
  * Initialize vignette model with some vignetting
  */
 Database::Database(int image_width,int image_height) :
-    m_vignette_estimate(-0.3,0,0,image_width,image_height),
+    m_vignette_estimate(-0.3,0,0,image_width,image_height), // 渐晕初始值
     m_response_estimate()
 {
     m_image_width  = image_width;
@@ -69,6 +69,7 @@ void Database::visualizeTracking()
     cv::waitKey(1);
 }
 
+//* exponent 是曝光时间的倍数, 曝光时间使用e的指数表示
 void Database::visualizeRapidExposureTimeEstimates(double exponent)
 {
     // Visualize exposure times 
@@ -89,7 +90,7 @@ void Database::visualizeRapidExposureTimeEstimates(double exponent)
     {
         // Fetch estimated and GT exposure time data, pow estimates with alignment exponent
         Frame current_frame = m_tracked_frames.at(m_tracked_frames.size()-nr_frames_to_vis+i);
-        double frame_exp_time = pow(current_frame.m_exp_time,exponent);
+        double frame_exp_time = pow(current_frame.m_exp_time,exponent);  //? 曝光时间是变得啊, 都使用这一个相同的倍数???
         double frame_time_gt  = current_frame.m_gt_exp_time;
 
         // Keep track of max and min exposure to scale between [0,1]
@@ -98,6 +99,7 @@ void Database::visualizeRapidExposureTimeEstimates(double exponent)
         if(frame_exp_time < min_exp)
             min_exp = frame_exp_time;
 
+        //! ∑ || gt - a*estimate ||^2 最小二乘, 对 a 导数为0
         // Accumulate information for least square fit between GT and estimated exposure
         top += frame_exp_time*frame_time_gt;
         bot += frame_exp_time*frame_exp_time;
@@ -177,6 +179,7 @@ std::vector<cv::Point2f> Database::fetchActiveFeatureLocations()
     return point_locations;
 }
 
+//* 删除最旧的一帧, 还要更改链表
 void Database::removeLastFrame()
 {
     // Erase the information about the first frame

@@ -22,6 +22,7 @@ double RapidExposureTimeEstimator::estimateExposureTime()
      * A minimum number of m_window_size frames is required for exposure time estimation
      * Not enough frames available yet, fix exposure time to 1.0
      */
+//[ ***step 1*** ] 判断窗口内,帧的数目是否足够多
     if(m_database->m_tracked_frames.size() < m_window_size)
     {
         return 1.0;
@@ -40,8 +41,11 @@ double RapidExposureTimeEstimator::estimateExposureTime()
         //skip newly extracted features (no link to previous frame, cannot be used for exp. estimation)
         if(features_last_frame.at(i)->m_prev_feature == NULL)
             continue;
-        
+
+//[ ***step 2*** ] 将当前特征的辐照值, 和窗口内的对应的相加, 求平均
+        // 返回的是特征附近的图像块 辐照 L 值
         // average the radiance estimate for this feature from the last m_window_size frames
+        // 上一个的
         std::vector<double> radiances = features_last_frame.at(i)->m_prev_feature->m_radiance_estimates;
         
         // count the number of features used to estimate the point radiances
@@ -50,7 +54,7 @@ double RapidExposureTimeEstimator::estimateExposureTime()
         // Iterate the rest of the m_window_size features in the other images to accumulate radiance information
         Feature* curr_feature = features_last_frame.at(i)->m_prev_feature;
 
-        // Todo: k should start from 1?
+        // Todo: k should start from 1?    don't care
         for(int k = 0;k < m_window_size;k++)
         {
             // Go one feature backwards
@@ -67,10 +71,11 @@ double RapidExposureTimeEstimator::estimateExposureTime()
             std::vector<double> radiances_temp = curr_feature->m_radiance_estimates;
             for(int r = 0;r < radiances_temp.size();r++)
             {
-                radiances.at(r) += radiances_temp.at(r);
+                radiances.at(r) += radiances_temp.at(r); //求和
             }
         }
         
+        // 平均
         // Average radiance estimates for this feature
         for(int r = 0;r < radiances.size();r++)
         {
@@ -82,12 +87,12 @@ double RapidExposureTimeEstimator::estimateExposureTime()
         
         // Fetch gradient values for the tracked feature
         std::vector<double> grad_values = features_last_frame.at(i)->m_gradient_values;
-        
+//[ ***step 3*** ] 对特征附近patch内每个像素, 求曝光时间, 并进行加权平均
         // Estimate one exposure ratio for each of the tracking patch points
         for(int k = 0;k < radiances.size();k++)
         {
             // Weight the estimate depending on the gradient (high gradient = low confidence)
-            double weight = 1.0 - grad_values.at(k)/125;
+            double weight = 1.0 - grad_values.at(k)/125; // 高梯度, 低权重
             if(weight < 0)weight = 0;
             
             // Avoid division by 0 for underexposed points
@@ -113,7 +118,7 @@ double RapidExposureTimeEstimator::estimateExposureTime()
     
     // Average the exposure information for each patch
     // [TODO] Maybe use a more robust way to select an exposure time in the presence of severe noise
-    double final_exp_estimate = e_estimate / nr_estimates;
+    double final_exp_estimate = e_estimate / nr_estimates; // 加权平均
 
     // Todo: this part is confusing...
     // Handle exposure time drift
@@ -135,11 +140,11 @@ double RapidExposureTimeEstimator::estimateExposureTime()
         {
             uchar image_value = corrected_image.at<uchar>(r,c);
             uchar orig_value  = original_image.at<uchar>(r,c);
-            if(image_value < 15 && orig_value >= 30)
+            if(image_value < 15 && orig_value >= 30) // 欠曝
             {
                 nr_underexposed++;
             }
-            else if(image_value > 240 && orig_value <= 200)
+            else if(image_value > 240 && orig_value <= 200) // 过曝
             {
                 nr_overexposed++;
             }
@@ -152,6 +157,8 @@ double RapidExposureTimeEstimator::estimateExposureTime()
     //std::cout << "UNDER: " << percentage_underexposed << " -- OVER: " << percentage_overexposed << std::endl;
     
     // If the amount of over/underexposed images are too large, correct the exposure time drift
+    //* 人工的修正
+    //bug 可改进, semantic
     if(percentage_overexposed > 0.05)
     {
         final_exp_estimate += 0.03;

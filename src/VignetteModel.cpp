@@ -25,6 +25,7 @@ VignetteModel::VignetteModel(double v1,double v2,double v3,int image_width,int i
     m_max_radius = sqrt((image_width/2)*(image_width/2) + (image_height/2)*(image_height/2));
 }
 
+//* 归一化半径, 除以最大值
 double VignetteModel::getNormalizedRadius(cv::Point2f xy_location)
 {
     double x = xy_location.x;
@@ -39,6 +40,7 @@ double VignetteModel::getNormalizedRadius(cv::Point2f xy_location)
     return radius;
 }
 
+//* 衰减系数
 double VignetteModel::getVignetteFactor(cv::Point2f xy_location)
 {
     double r = getNormalizedRadius(xy_location);

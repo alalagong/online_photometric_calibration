@@ -44,6 +44,7 @@ int ImageReader::getDir(std::string dir, std::vector<std::string> &files)
         return -1;
     }
 
+    // 读目录下所有文件名
     while ((dirp = readdir(dp)) != NULL)
     {
         std::string name = std::string(dirp->d_name);
@@ -51,18 +52,20 @@ int ImageReader::getDir(std::string dir, std::vector<std::string> &files)
         if(name != "." && name != "..")
             files.push_back(name);
     }
-
+    
+    // 排序
     closedir(dp);
     std::sort(files.begin(), files.end());
 
     if(dir.at(dir.length() - 1) != '/')
         dir = dir+"/";
-
+    
+    // 文件名加上目录
     for(unsigned int i = 0; i < files.size(); i++)
     {
         if(files[i].at(0) != '/')
             files[i] = dir + files[i];
     }
-
+    
     return (int)files.size();
 }

@@ -1,6 +1,9 @@
 # Online_photometric_calibration注释版本
 > by gong
 
+- 原来代码的注释已经很nice了, 夸!!!
+- 加了一些公式, step注释
+
 ---
 # Online Photometric Calibration
 

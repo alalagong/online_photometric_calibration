@@ -28,6 +28,7 @@ public:
      */
     ResponseModel()
     {
+        //* 初始值
         m_inverse_response_vector.clear();
         for(int i = 0;i < 256;i++)
         {

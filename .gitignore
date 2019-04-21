@@ -39,3 +39,7 @@ build/
 */lib/
 *~
 cmake-build-*/
+
+# vscode
+*.ipch
+*.bin

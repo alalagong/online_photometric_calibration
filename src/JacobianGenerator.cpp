@@ -15,9 +15,9 @@ JacobianGenerator::JacobianGenerator()
     // Nothing to initialize
 }
 
-void JacobianGenerator::getRawJacobianRow(double I,
-                                          double r,
-                                          double e,
+void JacobianGenerator::getRawJacobianRow(double I, // 辐照L
+                                          double r, // 半径
+                                          double e, // 曝光时间
                                           std::vector<double>& j_res,
                                           std::vector<double>& j_vig,
                                           double& j_e,
@@ -26,6 +26,7 @@ void JacobianGenerator::getRawJacobianRow(double I,
     j_res.clear();
     j_vig.clear();
     
+    //* 衰减系数
     // Get the vignetting value
     double a2 = m_vignetting_params.at(0);
     double a4 = m_vignetting_params.at(1);
@@ -34,7 +35,8 @@ void JacobianGenerator::getRawJacobianRow(double I,
     double r4 = r2 * r2;
     double r6 = r4 * r2;
     double v  = 1 + a2*r2 + a4*r4 + a6*r6;
-        
+
+    //* 响应函数
     // Evaluate the Grossberg base functions at the derivatives for the other derivatives
     double eIv = e * I * v;
     double h_0_d = evaluateGrossbergBaseFunction(0, true, eIv);
@@ -42,13 +44,14 @@ void JacobianGenerator::getRawJacobianRow(double I,
     double h_2_d = evaluateGrossbergBaseFunction(2, true, eIv);
     double h_3_d = evaluateGrossbergBaseFunction(3, true, eIv);
     double h_4_d = evaluateGrossbergBaseFunction(4, true, eIv);
-        
+    //* 响应函数的导数    
     double deriv_value = h_0_d +
                          m_response_params.at(0)*h_1_d +
                          m_response_params.at(1)*h_2_d +
                          m_response_params.at(2)*h_3_d +
                          m_response_params.at(3)*h_4_d;
     
+    //* 残差对响应函数的参数 c 求导
     // Derive by the 4 Grossberg parameters
     double j_res_1  = 255*evaluateGrossbergBaseFunction(1, false, eIv);
     double j_res_2  = 255*evaluateGrossbergBaseFunction(2, false, eIv);
@@ -60,6 +63,7 @@ void JacobianGenerator::getRawJacobianRow(double I,
     j_res.push_back(j_res_3);
     j_res.push_back(j_res_4);
     
+    //* 残差对衰减因子系数 v 求导
     // Derive by the 3 vignetting parameters
     double j_vig_1 = 255 * deriv_value * e * I * r2;
     double j_vig_2 = 255 * deriv_value * e * I * r4;
@@ -69,14 +73,17 @@ void JacobianGenerator::getRawJacobianRow(double I,
     j_vig.push_back(j_vig_2);
     j_vig.push_back(j_vig_3);
     
+    //* 残差对曝光时间 e 导数
     // Derive by exposure time
     j_e = 255 * deriv_value * (I*v);
 
+    //* 残差对辐照 L 导数
     double j_I_temp;
     getJacobianRadiance(I, r, e, j_I_temp);
     j_I = j_I_temp;
 }
 
+//* 第image_index图像, 第residual_index点导数
 void JacobianGenerator::getJacobianRow_eca(double I,
                                            double r,
                                            double e,
@@ -94,7 +101,7 @@ void JacobianGenerator::getJacobianRow_eca(double I,
     double v  = 1 + a2*r2 + a4*r4 + a6*r6;
         
     // Evaluate the grossberg base functions' derivatives for the other derivatives
-    double eIv = e * I * v;
+    double eIv = e * I * v; // 0~1之间的数
     double h_0_d = evaluateGrossbergBaseFunction(0, true, eIv);
     double h_1_d = evaluateGrossbergBaseFunction(1, true, eIv);
     double h_2_d = evaluateGrossbergBaseFunction(2, true, eIv);
@@ -150,15 +157,17 @@ void JacobianGenerator::getJacobianRadiance(double I,double r,double e,double& j
     j_I = 255 * deriv_value * (e*v);
 }
 
-
+//* 求响应函数的 h0, h1, h2, h3, h4
 double JacobianGenerator::evaluateGrossbergBaseFunction(int base_function_index,bool is_derivative,double x)
 {
     if(x < 0)x = 0.0;
     else if(x > 1)x = 1.0;
     
+    //* 变换到相应分度
     int x_int = round(x*1023);
     int x_der_int = round(x*1021);
     
+    //* 查表
     if(base_function_index == 0)
     {
         if(!is_derivative)
@@ -223,6 +232,7 @@ double JacobianGenerator::evaluateGrossbergBaseFunction(int base_function_index,
     return -1.0;
 }
 
+// 求衰减系数 V(x)
 double JacobianGenerator::applyGrossbergResponse(double x)
 {
     double v0 = evaluateGrossbergBaseFunction(0, false, x);
@@ -239,17 +249,22 @@ double JacobianGenerator::applyGrossbergResponse(double x)
     return v0 + c1*v1 + c2*v2 + c3*v3 + c4*v4;
 }
 
+//* 最小二乘更新衰减 V 的四个参数
+//! c1*h1 + c2*h2 + c3*h3 + c4*h4 = response - f0
+//! J = [h1, h2, h3, h4]
+//! left = J^T * J           right = J^T * (response - f0)
 std::vector<double> JacobianGenerator::fitGrossbergModelToResponseVector(double* response)
 {
     // Given a response vector, find Grossberg parameters that fit well
     cv::Mat LeftSide(4,4,CV_64F,0.0);
     cv::Mat RightSide(4,1,CV_64F,0.0);
     
+    //*响应函数f : response = f(i)
     for(int i = 10;i < 240;i++)
     {
-        response[i] /= 255.0;
+        response[i] /= 255.0; // 变到0-1
         
-        double input = i/256.0;
+        double input = i/256.0; // 0-1
         
         double f0 = evaluateGrossbergBaseFunction(0, false, input);
         double f1 = evaluateGrossbergBaseFunction(1, false, input);
