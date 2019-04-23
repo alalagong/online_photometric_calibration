@@ -30,12 +30,14 @@ NonlinearOptimizer::NonlinearOptimizer(int keyframe_spacing,
     m_raw_inverse_response = new double[256];
 }
 
+//* 创建optimize block中的点
 bool NonlinearOptimizer::extractOptimizationBlock()
 {
     int nr_images_in_database = static_cast<int>(m_database->m_tracked_frames.size());
 
     // Not enough images in the database yet -> extraction fails
     // Todo: why 2 times?
+    // 关键帧之间间隔 * 关键帧数 + 空出来的数目
     if(nr_images_in_database < 2*(m_keyframe_spacing*m_min_keyframes_valid)+m_safe_zone_size)
     {
         return false;
@@ -54,6 +56,7 @@ bool NonlinearOptimizer::extractOptimizationBlock()
     // Iterate through all images in the database (except the most current ones used for exposure optimization)
     for(int i = 0;i < nr_images_in_database - m_safe_zone_size;i++)
     {
+//[ ***step 1*** ] 向block中添加关键帧 (图像, 曝光时间), 每隔spacing选一个
         // Only add keyframe images
         if(i%m_keyframe_spacing == 0)
         {
@@ -71,23 +74,24 @@ bool NonlinearOptimizer::extractOptimizationBlock()
         // Get all features in the current keyframe and iterate them
         // Todo: change features to pointer?
         std::vector<Feature*> features = m_database->m_tracked_frames.at(i).m_features;
-        
+
         for(int p = 0;p < features.size();p++)
         {
             // Skip features that are not new, don't attempt at creating a new optimization point
+            // 因为是从database这些帧里的第0帧开始优化, 以前的点都不考虑或已经考虑过, 从第i帧开始
             if(features.at(p)->m_prev_feature != NULL)
                 continue;
             
             // Find out in how many and which keyframes this point is visible
             Feature* feature_iterator = features.at(p);
-            std::vector<int> keyframes_valid;
+            std::vector<int> keyframes_valid; // 关键帧索引
             int feature_iterator_image_index = i;
-            
+//[ ***step 2*** ] 从当前帧上的特征点, 向后统计被跟踪的关键帧数目, 跟踪时间段则continue            
             // Track the feature forward until either we hit NULL or the feature is tracked out of the safe zone
             while(feature_iterator != NULL && feature_iterator_image_index < nr_images_in_database-m_safe_zone_size)
             {
                 if(feature_iterator_image_index%m_keyframe_spacing == 0) //feature_iterator_image_index is a keyframe image
-                    keyframes_valid.push_back(feature_iterator_image_index/m_keyframe_spacing);
+                    keyframes_valid.push_back(feature_iterator_image_index/m_keyframe_spacing); // 第几个关键帧
                 
                 // Check the next feature, break if the min. number of keyframes necessary for this feature has been reached
                 // -> then go on to extract image information for this feature
@@ -104,28 +108,28 @@ bool NonlinearOptimizer::extractOptimizationBlock()
                 continue;
             
             // Allocate new optimization point
-            OptimizedPoint opt_p;
+            OptimizedPoint opt_p; // 优化点
             opt_p.start_image_idx = keyframes_valid.at(0);
             
             // Initialize vector for radiance estimates
             std::vector<double> radiance_estimate;
             for(int r = 0;r < features.at(p)->m_radiance_estimates.size();r++)
             {
-                radiance_estimate.push_back(0.0);
+                radiance_estimate.push_back(0.0); // 初始化值
             }
             
             // Iterate the good feature again, now completely and extract its information
             feature_iterator = features.at(p);
             feature_iterator_image_index = i;
             int nr_keyframes_valid = 0;
-            
+//[ ***step 3*** ] 计算关键帧上的特征点的信息, 加入optimize point
             while(feature_iterator != NULL && feature_iterator_image_index < nr_images_in_database-m_safe_zone_size)
             {
                 if(feature_iterator_image_index%m_keyframe_spacing != 0) //only extract data on keyframe images
                 {
                     feature_iterator = feature_iterator->m_next_feature;
                     feature_iterator_image_index++;
-                    continue;
+                    continue; // 不是关键帧则跳过
                 }
                 
                 nr_keyframes_valid++;
@@ -133,7 +137,7 @@ bool NonlinearOptimizer::extractOptimizationBlock()
                 // Accumulate radiance estimates (obtained using the previously corrected image data)
                 for(int r = 0;r < feature_iterator->m_radiance_estimates.size();r++)
                 {
-                    radiance_estimate.at(r) += feature_iterator->m_radiance_estimates.at(r);
+                    radiance_estimate.at(r) += feature_iterator->m_radiance_estimates.at(r); //patch内求和
                 }
                 
                 // Initialize the estimation problem with the average of the output intensities of the original images
@@ -179,7 +183,7 @@ bool NonlinearOptimizer::extractOptimizationBlock()
             
             // Store the radiance estimates to the optimization point
             opt_p.radiances = radiance_estimate;
-            
+//[ ***step 4*** ] 点加入到优化的block
             // Add point to optimization block
             m_optimization_block->addOptimizationPoint(opt_p);
         }
@@ -190,6 +194,7 @@ bool NonlinearOptimizer::extractOptimizationBlock()
 
 double NonlinearOptimizer::evfOptimization(bool show_debug_prints)
 {
+//[ ***step 1*** ] 构造最小二乘的参数矩阵
     // Used for calculating first order derivatives, creating the Jacobian
     JacobianGenerator jacobian_generator;
     jacobian_generator.setResponseParameters(m_response_estimate);
@@ -197,7 +202,7 @@ double NonlinearOptimizer::evfOptimization(bool show_debug_prints)
     
     // Find maximum number of residuals
     int points_per_patch = pow(2*m_patch_size+1,2);
-    int num_residuals = m_optimization_block->getNrResiduals();
+    int num_residuals = m_optimization_block->getNrResiduals(); // 每个像素一个残差, 总和
     
     // Number of parameters to optimize for (4 response, 3 vignette + exposure times)
     int num_parameters = C_NR_RESPONSE_PARAMS + C_NR_VIGNETTE_PARAMS + m_optimization_block->getNrImages();
@@ -217,23 +222,23 @@ double NonlinearOptimizer::evfOptimization(bool show_debug_prints)
     std::vector<OptimizedPoint>* points_to_optimize = m_optimization_block->getOptimizedPoints();
     
     // Iterate all tracked points
-    for(int p = 0;p < points_to_optimize->size();p++)
+    for(int p = 0;p < points_to_optimize->size();p++)  //! 迭代优化点 p
     {
         int image_start_index = points_to_optimize->at(p).start_image_idx;
         int nr_img_valid = points_to_optimize->at(p).num_images_valid;
         
         // Iterate images the point is valid
-        for(int i = 0;i < nr_img_valid;i++)
+        for(int i = 0;i < nr_img_valid;i++)  //! 迭代点所跟踪到的帧 i
         {
             double radius = points_to_optimize->at(p).radii.at(i);
             double exposure = m_optimization_block->getExposureTime(image_start_index+i);
                 
             //iterate all the points in the patch
-            for(int r = 0;r < points_per_patch;r++)
+            for(int r = 0;r < points_per_patch;r++)  //! 迭代点周围的像素(patch) r
             {
                 double grad_weight = points_to_optimize->at(p).grad_weights.at(i).at(r);
                 if(grad_weight < 0.001) // Dont include a point with close to 0 weight in optimization
-                    continue;
+                    continue; //* 梯度太大, 忽略, I=0情况不行???
                 
                 double radiance = points_to_optimize->at(p).radiances.at(r);
                 double o_value = points_to_optimize->at(p).output_intensities.at(i).at(r);
@@ -246,7 +251,7 @@ double NonlinearOptimizer::evfOptimization(bool show_debug_prints)
                 
                 // Count the actual number of residuals up
                 residual_id++;
-                
+//[ ***step 2*** ] 计算雅克比矩阵                
                 // Fill the Jacobian row
                 jacobian_generator.getJacobianRow_eca(radiance,
                                                       radius,
@@ -270,7 +275,7 @@ double NonlinearOptimizer::evfOptimization(bool show_debug_prints)
                     }
                     std::cout << std::endl;
                 }*/
-                    
+//[ ***step 3*** ]  计算残差项, 和权重矩阵(信息矩阵)
                 // Write weight values to weight matrix
                 for(int k = 0;k < num_parameters;k++)
                 {
@@ -286,9 +291,9 @@ double NonlinearOptimizer::evfOptimization(bool show_debug_prints)
         }
     }
         
-    overall_image_index += m_optimization_block->getNrImages();
-    
-    int real_number_of_residuals = residual_id+1;
+    overall_image_index += m_optimization_block->getNrImages(); // 所有的图像数
+//[ ***step 4*** ] 根据实际的残差数目, 得到最终的雅克比, 残差, 权重
+    int real_number_of_residuals = residual_id+1; // 实际残差数目
     
     // Get only the relevant part of the Jacobian (actual number of residuals)
     Jacobian = Jacobian(cv::Rect(0,0,num_parameters,real_number_of_residuals));
@@ -312,7 +317,7 @@ double NonlinearOptimizer::evfOptimization(bool show_debug_prints)
     
     // Prepare identity matrix for Levenberg-Marquardt dampening
     cv::Mat Identity = cv::Mat::eye(num_parameters, num_parameters, CV_64F);
-    Identity = Identity.mul(A);
+    Identity = Identity.mul(A);  //bug 这里乘完不还是自己么
     
     // Backup photometric parameters in order to revert if update is not good
     std::vector<double> response_param_backup    = m_response_estimate;
@@ -333,6 +338,8 @@ double NonlinearOptimizer::evfOptimization(bool show_debug_prints)
 
     // Todo: are these the right LM iterations???
     // Rui: may be because of the alternative optimization of evf and radiances, thus only one iteration in the evf GN.
+//[ ***step 5*** ] 迭代求解参数增量, 和以前的最小二乘迭代不太一样
+//? 这个优化过程, 没有更新residual, jacobian??? 一种近似???
     for(int round = 0;round < max_rounds;round++)
     {
         if(show_debug_prints)
@@ -341,12 +348,13 @@ double NonlinearOptimizer::evfOptimization(bool show_debug_prints)
         //solve the linear equation system
         cv::Mat State_Update;
 
-        lambda = 1.0;
+        lambda = 1.0;  //? lambda 干什么的
   
         // Solve state update equation (+LM damping)
         // Todo: reuse Jacobian_T to save time?
+        //? 只改变了, lm_dampening
         State_Update = - (Jacobian.t()* Weights_Jacobian.mul(Jacobian) + lm_dampening*Identity).inv(cv::DECOMP_SVD)*(Jacobian.t()*Residuals);
-        
+//[ ***step 5*** ] 更新
         // Update the estimated parameters
         for(int k = 0;k < m_response_estimate.size();k++)
         {
@@ -368,7 +376,7 @@ double NonlinearOptimizer::evfOptimization(bool show_debug_prints)
         
         // Evaluate new residual error with new parameter estimate
         double current_error;
-        getTotalResidualError(current_error,avg_error);
+        getTotalResidualError(current_error,avg_error); //算新的误差
         
         if(show_debug_prints)
             std::cout << "error after ECA adjustment: total: " << current_error << " avg: " << avg_error << std::endl;
@@ -397,7 +405,7 @@ double NonlinearOptimizer::evfOptimization(bool show_debug_prints)
             }
         }
     }
-    
+//[ ***step 6*** ] 利用最好的增量值进行更新
     // Apply the best of the found state updates
     
     for(int k = 0;k < m_response_estimate.size();k++)
@@ -433,6 +441,7 @@ double NonlinearOptimizer::evfOptimization(bool show_debug_prints)
     return avg_error;
 }
 
+//* 计算一个像素的残差
 double NonlinearOptimizer::getResidualValue(double O, double I, double r, double e)
 {
     double vignetting = applyVignetting(r);
@@ -470,6 +479,7 @@ double NonlinearOptimizer::getResidualValue(double O, double I, double r, double
     return residual;
 }
 
+//* 计算残差的总和, 和平均值
 void NonlinearOptimizer::getTotalResidualError(double& total_error,double& avg_error)
 {
     int residual_id = -1;
@@ -537,13 +547,13 @@ double NonlinearOptimizer::radianceFullOptimization()
     std::vector<OptimizedPoint>* points_to_optimize = m_optimization_block->getOptimizedPoints();
     
     // Iterate all tracked points
-    for(int  p = 0;p < points_to_optimize->size();p++)
+    for(int  p = 0;p < points_to_optimize->size();p++)   //! 跌代优化点 p
     {
         int start_image = points_to_optimize->at(p).start_image_idx;
         int num_images  = points_to_optimize->at(p).num_images_valid;
         
         // Iterate all point patches
-        for(int r = 0;r < nr_patch_points;r++)
+        for(int r = 0;r < nr_patch_points;r++)  //! 迭代优化点附近像素 r
         {
             double radiance_guess = points_to_optimize->at(p).radiances.at(r);
             double left_side_sum = 0;
@@ -551,7 +561,7 @@ double NonlinearOptimizer::radianceFullOptimization()
             double initialResidualError = getResidualErrorPoint(points_to_optimize->at(p),r);
             
             // Iterate all images
-            for(int i = 0;i < num_images;i++)
+            for(int i = 0;i < num_images;i++)   //! 迭代优化图像间对应像素  i
             {
                 double exposure = m_optimization_block->getExposureTime(start_image+i);
                 double radius   = points_to_optimize->at(p).radii.at(i);
@@ -574,7 +584,7 @@ double NonlinearOptimizer::radianceFullOptimization()
             double new_error = initialResidualError+1;
             int max_iterations = 10;
             int curr_iteration = 0;
-
+            //? 没有迭代, 每次只是减去上一次的一个固定值, 是为了减小计算量把
             while(new_error > initialResidualError)
             {
                 if(curr_iteration == max_iterations)
@@ -610,6 +620,7 @@ double NonlinearOptimizer::radianceFullOptimization()
     return avg_error;
 }
 
+//* 计算点p处在所有图像中的残差和
 double NonlinearOptimizer::getResidualErrorPoint(OptimizedPoint p,int r)
 {
     int start_image = p.start_image_idx;
@@ -629,7 +640,7 @@ double NonlinearOptimizer::getResidualErrorPoint(OptimizedPoint p,int r)
     return totalError;
 }
 
-
+//* 从database中得到, 渐晕, 衰减的参数
 void NonlinearOptimizer::fetchResponseVignetteFromDatabase()
 {
     // Fetch vignette estimate from database
@@ -643,6 +654,7 @@ void NonlinearOptimizer::fetchResponseVignetteFromDatabase()
     m_response_estimate.push_back(0.0);
 }
 
+//* 计算衰减因子
 double NonlinearOptimizer::applyVignetting(double r)
 {
     double r_2 = r*r;
@@ -659,6 +671,7 @@ double NonlinearOptimizer::applyVignetting(double r)
     return result_vignette;
 }
 
+//* 计算经过响应函数的值
 double NonlinearOptimizer::applyResponse(double x)
 {
     JacobianGenerator jacobian_generator;
@@ -667,12 +680,14 @@ double NonlinearOptimizer::applyResponse(double x)
     return 255*result;
 }
 
+
 double NonlinearOptimizer::visualizeOptimizationResult(double* inverse_response)
 {
     // Define an exponential factor here to scale response + vignette
     // double exponent = 1.0;
     // To go through one point of the GT response of the TUM Mono camera
     //double exponent = determineGammaFixResponseAt(inverse_response, 206, 0.5);
+    //* 给定一个真值点, 计算真值和计算的值的log倍数, 也就是指数, 过这个真值点
     double exponent = determineGammaFixResponseAt(inverse_response, 148, 0.3);
     
     // Setup output image windows
@@ -692,6 +707,7 @@ double NonlinearOptimizer::visualizeOptimizationResult(double* inverse_response)
     response_function[0] = 0;
     response_function[255] = 255;
 
+    //* 通过 inverse_response 找到response, 因为设它是单调的, 直接插值算逆
     // For each response value i find s, such that inverse_response[s] = i
     for(int i=1;i<255;i++)
     {
@@ -707,6 +723,7 @@ double NonlinearOptimizer::visualizeOptimizationResult(double* inverse_response)
     
     // Setup a 256x256 mat to display inverse response + response
     // Todo: change to class member
+    //* 画图
     cv::Mat response_vis_image(256,256,CV_8UC3,cv::Scalar(0,0,0));
     for(int i = 0;i < 256;i++)
     {
@@ -749,6 +766,7 @@ double NonlinearOptimizer::visualizeOptimizationResult(double* inverse_response)
          response_vis_image.at<cv::Vec3b>(255-dso_gamma_approx_y_int,i)[1] = 255;
          response_vis_image.at<cv::Vec3b>(255-dso_gamma_approx_y_int,i)[2] = 0;*/
         
+        //? 这波操作看不懂, 是DSO camera的特有参数?
         double m;
         double t;
         //draw GT response for DSO camera
@@ -793,7 +811,7 @@ double NonlinearOptimizer::visualizeOptimizationResult(double* inverse_response)
     // TODO: move only the first time the window is created,
     //       to allow the user to move it somewhere else.
     //       Same for other calls to "moveWindow".
-    cv::moveWindow("Estimated Response", 20,20);
+    cv::moveWindow("Estimated Response", 20,20); // 移动到(20, 20)的位置
 
     // Show the vignetting
     
@@ -852,6 +870,7 @@ double NonlinearOptimizer::visualizeOptimizationResult(double* inverse_response)
     cv::moveWindow("Estimated Vignetting", 20,20+50+256);
 
 
+    //* 这部分画的是后端优化后的曝光时间, database里面画的是快速估计的值
     // Visualize exposure times 
     // If GT data is available, the estimated exposure times will be aligned 
     // to the GT by computing an optimal alignment factor alignment_alpha
@@ -952,6 +971,7 @@ double NonlinearOptimizer::visualizeOptimizationResult(double* inverse_response)
     return exponent;
 }
 
+//* 固定gamma值, 求response_inverse
 double NonlinearOptimizer::getInverseResponseFixGamma(double* inverse_response_function)
 {
     getInverseResponseRaw(inverse_response_function);
@@ -967,6 +987,7 @@ double NonlinearOptimizer::getInverseResponseFixGamma(double* inverse_response_f
     return gamma;
 }
 
+//* 从response求response_inverse, 使用的还是, 搜索插值
 void NonlinearOptimizer::getInverseResponseRaw(double* inverse_response_function)
 {
     //set boundaries of the inverse response
@@ -998,6 +1019,7 @@ void NonlinearOptimizer::getInverseResponseRaw(double* inverse_response_function
     }
 }
 
+//* 固定一点, 求gamma系数
 double NonlinearOptimizer::determineGammaFixResponseAt(double*inverse_response,int x,double y)
 {
     double v_y = inverse_response[x];
@@ -1007,6 +1029,8 @@ double NonlinearOptimizer::determineGammaFixResponseAt(double*inverse_response,i
 
 void NonlinearOptimizer::smoothResponse()
 {
+//[ ***step 1*** ] 求response_inverse然后, 再插值计算response
+//bug 使用applyresponse就能算出response, 兜这一圈干啥...
     // Get inverse response estimate, fixing the gamma value reasonably
     double inverse_response[256];
     double gamma = getInverseResponseFixGamma(inverse_response);
@@ -1034,11 +1058,12 @@ void NonlinearOptimizer::smoothResponse()
             }
         }
     }
-    
+//[ ***step 2*** ] 然后再计算相应函数的系数
     // Fit the Grossberg parameters new to the acquired data
     JacobianGenerator generator;
     m_response_estimate = generator.fitGrossbergModelToResponseVector(response_function);
-    
+
+//[ ***step 3*** ] 对衰减系数取0-1之间的100个数, 进行gamma倍的缩放
     // Scale vignette by gamma factor
     double vfactors[100];
     for(int r = 0;r < 100;r++)
@@ -1048,7 +1073,8 @@ void NonlinearOptimizer::smoothResponse()
         vfactor = pow(vfactor,gamma);
         vfactors[r] = vfactor;
     }
-    
+
+//[ ***step 4*** ] 对曝光也进行gamma倍缩放, 是因为差个绝对尺度???
     //[Note] Radiances of optimization should be scaled as well, but since these are not used anymore, its not done
     int nr_block_images = m_optimization_block->getNrImages();
     for(int k = 0;k < nr_block_images;k++)
@@ -1058,6 +1084,7 @@ void NonlinearOptimizer::smoothResponse()
         m_optimization_block->setExposureTime(k,new_exposure);
     }
 
+//[ ***step 5*** ] 利用之前的100个值进行最小二乘拟合, 更新衰减参数
     // Fit new vignetting parameters in least square manner
     cv::Mat LeftSide(3,3,CV_64F,0.0);
     cv::Mat RightSide(3,1,CV_64F,0.0);
@@ -1072,7 +1099,7 @@ void NonlinearOptimizer::smoothResponse()
             double diff = vfactors[r] - vfactors[r-1];
             if(diff > 0)
             {
-                w = 0.5;
+                w = 0.5; // 权重系数减小, 应该越向外越小, 衰减严重
                 vfactors[r] = vfactors[r-1];
                 nr_bad_v++;
             }

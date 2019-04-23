@@ -32,9 +32,9 @@ int OptimizationBlock::getNrResiduals()
     
     for(int i = 0;i < m_optimized_points.size();i++)
     {
-        int nr_images = m_optimized_points.at(i).num_images_valid;
-        
-        nr_residuals += (nr_images * m_nr_patch_points);
+        int nr_images = m_optimized_points.at(i).num_images_valid; // 特征点数
+         
+        nr_residuals += (nr_images * m_nr_patch_points);  // 每个点一个patch, 总的残差数
     }
     
     return nr_residuals;
@@ -59,10 +59,12 @@ void OptimizationBlock::visualizeBlockInformation(int image_width,int image_heig
                 continue;
             }
             
+            //*　i-start, 在该点被观测的帧中的第几帧
             // Drawing happens here
             cv::Point2f location = m_optimized_points.at(p).xy_image_locations.at(i-start_img);
             std::vector<double> outputs = m_optimized_points.at(p).output_intensities.at(i-start_img);
             
+            //* 画优化的像素patch
             int output_index = 0;
             for(int x = -m_patch_size;x <= m_patch_size;x++)
             {
@@ -83,6 +85,7 @@ void OptimizationBlock::visualizeBlockInformation(int image_width,int image_heig
             
         }
         
+        //* 画feature外的其它像素
         // For each pixel where no tracking information is present, draw the original image data around (in different color)
         // in order to check for consistency of the tracking data with the original images
         cv::Mat original_image = m_original_images.at(i);

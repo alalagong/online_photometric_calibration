@@ -28,7 +28,7 @@ public:
     /**
      * First keyframe this point is valid
      */
-    int start_image_idx;
+    int start_image_idx; 
     
     /**
      * Number of keyframes this point is valid in
@@ -43,7 +43,7 @@ public:
     /**
      * Normalized radii of the point in its keyframe images
      */
-    std::vector<double> radii;
+    std::vector<double> radii;   //!< 归一化的半径
     
     /**
      * Gradient based weights used for optimization

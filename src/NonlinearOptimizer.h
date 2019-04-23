@@ -114,17 +114,18 @@ private:
     /**
      * Spacing of keyframes used for optimization relative to all available input images
      */
-    int m_keyframe_spacing;
+    int m_keyframe_spacing;         //!< 每隔这些个选择一个关键帧
     
     /**
      * Handle to database
      */
     Database* m_database;
     
+    //TODO maybe better to use mutex
     /**
      * Number of most recent images that should not be used for optimization since they are still modified by the tracker
      */
-    int m_safe_zone_size;
+    int m_safe_zone_size;           //!< 防止跟踪线程还在修改这些帧
     
     /**
      * Size of tracking patches
