@@ -1027,10 +1027,12 @@ double NonlinearOptimizer::determineGammaFixResponseAt(double*inverse_response,i
     return gamma;
 }
 
+//* 固定0.5 对应127, 计算一个gamma, 对其它变量都计算gamma次幂
 void NonlinearOptimizer::smoothResponse()
 {
 //[ ***step 1*** ] 求response_inverse然后, 再插值计算response
-//bug 使用applyresponse就能算出response, 兜这一圈干啥...
+//? 使用applyresponse就能算出response, 兜这一圈干啥...
+// 为了乘以这个gamma次幂?
     // Get inverse response estimate, fixing the gamma value reasonably
     double inverse_response[256];
     double gamma = getInverseResponseFixGamma(inverse_response);

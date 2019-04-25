@@ -19,6 +19,8 @@ Tracker::Tracker(int patch_size,int nr_active_features,int nr_pyramid_levels,Dat
     m_database = database;
 }
 
+//! 相当于多估计了一个增益倍数 e^k , 还没用上
+//TODO  1. 考虑使用去除 f 和 V 的图像跟踪;   2. 将估计的e^K作为曝光估计的初始值
 void Tracker::trackNewFrame(cv::Mat input_image,double gt_exp_time)
 {
 //[ ***step 1*** ] 计算梯度图像, 根据当前的估计去除 f, V, 未初始化则初始化提点
@@ -140,7 +142,7 @@ void Tracker::trackNewFrame(cv::Mat input_image,double gt_exp_time)
         std::vector<double> os = bilinearInterpolateImagePatch(input_image,tracked_points_new_frame.at(i).x,tracked_points_new_frame.at(i).y);
         f->m_output_values = os;
         std::vector<double> is = bilinearInterpolateImagePatch(corrected_frame,tracked_points_new_frame.at(i).x,tracked_points_new_frame.at(i).y);
-        f->m_radiance_estimates = is;
+        f->m_radiance_estimates = is;  // 还有曝光时间
         std::vector<double> gs = bilinearInterpolateImagePatch(gradient_image, tracked_points_new_frame.at(i).x, tracked_points_new_frame.at(i).y);
         f->m_gradient_values = gs;
         f->m_xy_location = tracked_points_new_frame.at(i);

@@ -44,13 +44,16 @@ struct Settings{
     string calibration_mode;    // Choose "online" or "batch".
 };
 
+// offline
 void run_batch_optimization_task(NonlinearOptimizer *optimizer)
 {
     std::cout << "START BATCH OPTIMIZATION" << std::endl;
     
+    // 感觉这个函数是为了初始化???
     optimizer->fetchResponseVignetteFromDatabase();
 
     // Perform optimization (since its offline just do )
+    // 3次
     optimizer->evfOptimization(false);
     std::cout << "EVF 1 DONE" << std::endl;
     optimizer->radianceFullOptimization();
@@ -68,14 +71,16 @@ void run_batch_optimization_task(NonlinearOptimizer *optimizer)
     // Initialize the inverse response vector with the current inverse response estimate
     // (in order to write it to the database later + visualization)
     // better to do this here since currently the inversion is done rather inefficiently and not to slow down tracking
-    optimizer->getInverseResponseRaw(optimizer->m_raw_inverse_response);
+    // 在这算不拖慢tracking
+    optimizer->getInverseResponseRaw(optimizer->m_raw_inverse_response); // 上面只算出来了系数, 没算出具体
     std::cout << "END OPTIMIZATION" << std::endl;
 }
 
+//* 只优化 evf 多线程
 void *run_optimization_task(void* thread_arg)
 {
     std::cout << "START OPTIMIZATION" << std::endl;
-    
+    // 多线程还可以这样用
     pthread_mutex_lock(&g_is_optimizing_mutex);
     g_is_optimizing = true;
     pthread_mutex_unlock(&g_is_optimizing_mutex);
@@ -117,8 +122,10 @@ std::vector<string> split(const string &s, char delim) {
     return tokens;
 }
 
-int run_batch_calibration(Settings *run_settings,std::vector<double> gt_exp_times)
+// offline
+int run_batch_calibration(Settings *run_settings, std::vector<double> gt_exp_times)
 {
+//[ ***step 1*** ] 设置各个类
     int safe_zone_size = 0;
 
     double vis_exponent = 1.0;
@@ -156,13 +163,14 @@ int run_batch_calibration(Settings *run_settings,std::vector<double> gt_exp_time
         {
             gt_exp_time = gt_exp_times.at(i);
         }
-        
+//[ ***step 2*** ] 跟踪图像
         // Read next input image
         cv::Mat new_image = image_reader.readImage(i);
         
         // Track input image (+ time the result)
         tracker.trackNewFrame(new_image,gt_exp_time);
 
+//[ ***step 3*** ] 曝光快速估计, 并去除
         // Rapid exposure time estimation (+ time the result)
         double exposure_time = exposure_estimator.estimateExposureTime();
         database.m_tracked_frames.at(database.m_tracked_frames.size()-1).m_exp_time = exposure_time;
@@ -189,7 +197,7 @@ int run_batch_calibration(Settings *run_settings,std::vector<double> gt_exp_time
         }
         
         // Required number of frames has been reached, calibrate all of them
-        
+//[ ***step 4*** ] 关键帧数目足够, 进行后端优化
         // Try to fetch a new optimization block
         bool succeeded = backend_optimizer.extractOptimizationBlock();
         
@@ -221,8 +229,8 @@ int run_batch_calibration(Settings *run_settings,std::vector<double> gt_exp_time
 int run_online_calibration(Settings *run_settings,std::vector<double> gt_exp_times)
 {
     double vis_exponent = 1.0;
-
-    int safe_zone_size = run_settings->nr_images_rapid_exp + 5;
+//[ ***step 1*** ] 设置各种类
+    int safe_zone_size = run_settings->nr_images_rapid_exp + 5;  // 快速曝光估计, 留作safe_zone
 
     //  Set up the object to read new images from
     ImageReader image_reader(run_settings->image_folder, cv::Size(run_settings->image_width, run_settings->image_height));
@@ -242,7 +250,7 @@ int run_online_calibration(Settings *run_settings,std::vector<double> gt_exp_tim
 
     // Set up the object that handles the tracking and receives new images, extracts features
     Tracker tracker(run_settings->tracker_patch_size,run_settings->nr_active_features,run_settings->nr_pyramid_levels,&database);
-    
+
     int optimize_cnt = 0;
     int num_images = image_reader.getNumImages();
     
@@ -258,9 +266,10 @@ int run_online_calibration(Settings *run_settings,std::vector<double> gt_exp_tim
         {
             gt_exp_time = gt_exp_times.at(i);
         }
-        
+//[ ***step 2*** ] 删除一些不好的, 多余的帧
         // If enough images are in the database, remove once all initial images for which no exposure time could be optimized
         // Since those frames will not be that good for backend optimization
+        // 初始的几帧，曝光时间是不知道的, 加入优化不利
         if(i == run_settings->nr_images_rapid_exp*2 + safe_zone_size)
         {
             for(int ii = 0;ii < run_settings->nr_images_rapid_exp;ii++)
@@ -269,13 +278,16 @@ int run_online_calibration(Settings *run_settings,std::vector<double> gt_exp_tim
             }
         }
         
+        // 每来一帧都会移除旧的
         // If the database is large enough, start removing old frames
         if(i > run_settings->nr_active_frames)
             database.removeLastFrame();
         
         // Read next input image
         cv::Mat new_image = image_reader.readImage(i);
-        
+
+//[ ***step 3*** ] 跟踪图像中的点, 并进行快速曝光时间矫正
+//? 使用的是原图像??? 这好吗, 根据论文模型应该使用去f, V的?
         // Track input image (+ time the result)
         tracker.trackNewFrame(new_image,gt_exp_time);
       
@@ -284,6 +296,7 @@ int run_online_calibration(Settings *run_settings,std::vector<double> gt_exp_tim
         database.m_tracked_frames.at(database.m_tracked_frames.size()-1).m_exp_time = exposure_time;
         database.visualizeRapidExposureTimeEstimates(vis_exponent);
 
+//TODO  它的特征的radiance不是特征共有的, 所以是假设所有之前点的平均值, 弄一个共有的一起优化的值会好些???
         // Remove the exposure time from the radiance estimates
         std::vector<Feature*>* features = &database.m_tracked_frames.at(database.m_tracked_frames.size()-1).m_features;
         for(int k = 0;k < features->size();k++)
@@ -305,7 +318,7 @@ int run_online_calibration(Settings *run_settings,std::vector<double> gt_exp_tim
         // Optimization is still running, don't do anything and keep tracking
         if(is_optimizing)
         {
-            continue;
+            continue; // 若在优化, 则继续跟踪
         }
         
         //optimization is currently not running
@@ -313,7 +326,7 @@ int run_online_calibration(Settings *run_settings,std::vector<double> gt_exp_tim
         // (2) Try to extract a new optimization block and restart optimization in the background
         
         // Fetch the old optimization result from the optimizer, if available
-        if(optimize_cnt > 0)
+        if(optimize_cnt > 0)  // 优化过了, 则把参数取出, 可视化
         {
             // Write the result to the database, visualize the result
             database.m_vignette_estimate.setVignetteParameters(backend_optimizer.m_vignette_estimate);
@@ -322,7 +335,7 @@ int run_online_calibration(Settings *run_settings,std::vector<double> gt_exp_tim
             
             vis_exponent = backend_optimizer.visualizeOptimizationResult(backend_optimizer.m_raw_inverse_response);
         }
-        
+//[ ***step 4*** ] 计算优化block成功, 则开辟线程, 进行后端优化
         // Try to fetch a new optimization block
         bool succeeded = backend_optimizer.extractOptimizationBlock();
         
@@ -335,8 +348,9 @@ int run_online_calibration(Settings *run_settings,std::vector<double> gt_exp_tim
         }
     }
 
-    pthread_join(opt_thread,NULL);
+    pthread_join(opt_thread,NULL);  //等待结束
 
+    // 取出结果
     if(optimize_cnt > 0)
     {
         // Write the result to the database, visualize the result
@@ -390,7 +404,7 @@ int main(int argc, char** argv)
     printf("End at index %d\n", run_settings.end_image_index);
     printf("Image width %d\n", run_settings.image_width);
     printf("Image height %d\n", run_settings.image_height);
-
+    //* 读取groundtruth exp_time
     // Parse gt exposure times from file if available
     // Only use the last number in each line, delimiter is the space character ' '
     std::ifstream exposure_gt_file_handle(run_settings.exposure_gt_file);
@@ -422,6 +436,7 @@ int main(int argc, char** argv)
     for(int k = 0;k < gt_exp_times.size();k++)
     {    
         //normalize gt exposures to range [0,1]
+        // 归一化
         gt_exp_times.at(k) = (gt_exp_times.at(k) - min_time)/(max_time - min_time);
     }
 

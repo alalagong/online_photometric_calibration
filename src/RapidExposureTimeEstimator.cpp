@@ -16,6 +16,7 @@ RapidExposureTimeEstimator::RapidExposureTimeEstimator(int window_size,Database*
     m_database    = database;
 }
 
+//* 直接用当前图像的和, 除以对应之前优化的L的和, 得到曝光时间
 double RapidExposureTimeEstimator::estimateExposureTime()
 {
     /*
@@ -158,7 +159,7 @@ double RapidExposureTimeEstimator::estimateExposureTime()
     
     // If the amount of over/underexposed images are too large, correct the exposure time drift
     //* 人工的修正
-    //bug 可改进, semantic
+    //TODO 可改进, semantic
     if(percentage_overexposed > 0.05)
     {
         final_exp_estimate += 0.03;
