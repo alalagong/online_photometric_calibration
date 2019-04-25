@@ -21,6 +21,7 @@ Tracker::Tracker(int patch_size,int nr_active_features,int nr_pyramid_levels,Dat
 
 void Tracker::trackNewFrame(cv::Mat input_image,double gt_exp_time)
 {
+//[ ***step 1*** ] 计算梯度图像, 根据当前的估计去除 f, V, 未初始化则初始化提点
     // Compute gradient (necessary for weighting factors)
     // Todo: move to class member
     cv::Mat gradient_image;
@@ -31,6 +32,7 @@ void Tracker::trackNewFrame(cv::Mat input_image,double gt_exp_time)
     cv::Mat corrected_frame = input_image.clone();
     photometricallyCorrectImage(corrected_frame);
  
+
     // Empty database -> First frame - extract features and push them back
     if(m_database->m_tracked_frames.size() == 0)
     {
@@ -39,23 +41,24 @@ void Tracker::trackNewFrame(cv::Mat input_image,double gt_exp_time)
     }
     
     // Database not empty
-    
+//[ ***step 2*** ] 从database最近帧, 向当前帧跟踪(前向)
     // Fetch the old active feature locations together with their image
     std::vector<cv::Point2f> feature_locations = m_database->fetchActiveFeatureLocations();
     cv::Mat last_frame = m_database->fetchActiveImage();
     
     // Track the feature locations forward using gain robust KLT
     std::vector<cv::Point2f> tracked_points_new_frame;
-    std::vector<unsigned char> tracked_point_status;
-    std::vector<float> tracking_error_values;
+    std::vector<unsigned char> tracked_point_status; 
+    std::vector<float> tracking_error_values; // 没用
 
     GainRobustTracker gain_robust_klt_tracker(C_KLT_PATCH_SIZE,C_NR_PYRAMID_LEVELS);
     std::vector<int> tracked_point_status_int;
     gain_robust_klt_tracker.trackImagePyramids(last_frame,
                                                input_image,
-                                               feature_locations,
-                                               tracked_points_new_frame,
+                                               feature_locations,  // from
+                                               tracked_points_new_frame,  // to
                                                tracked_point_status_int);
+    //? 换成uchar有什么意义                                               
     for(int i = 0;i < tracked_point_status_int.size();i++)
     {
         if(tracked_point_status_int.at(i) == 0)
@@ -68,10 +71,11 @@ void Tracker::trackNewFrame(cv::Mat input_image,double gt_exp_time)
         }
     }
      
+//[ ***step 3*** ] 从刚刚跟踪到的特征点, 向上一帧跟踪(反向)
     // Bidirectional tracking filter: Track points backwards and make sure its consistent
     std::vector<cv::Point2f> tracked_points_backtracking;
     std::vector<unsigned char> tracked_point_status_backtracking;
-    std::vector<float> tracking_error_values_backtracking;
+    std::vector<float> tracking_error_values_backtracking; // 没用
     GainRobustTracker gain_robust_klt_tracker_2(C_KLT_PATCH_SIZE,C_NR_PYRAMID_LEVELS);
     std::vector<int> tracked_point_status_int2;
     gain_robust_klt_tracker_2.trackImagePyramids(input_image,
@@ -90,7 +94,8 @@ void Tracker::trackNewFrame(cv::Mat input_image,double gt_exp_time)
             tracked_point_status_backtracking.push_back(1);
         }
     }
-    
+
+//[ ***step 4*** ] 计算前向和反向之间的误差, 太大的忽略
     // Tracked points from backtracking and old frame should be the same -> check and filter by distance
     for(int p = 0;p < feature_locations.size();p++)
     {
@@ -109,7 +114,8 @@ void Tracker::trackNewFrame(cv::Mat input_image,double gt_exp_time)
             tracked_point_status.at(p) = 0;
         }
     }
-    
+
+//[ ***step 5*** ] 创建新的帧, 加入刚刚跟踪的特征点
     Frame frame;
     frame.m_image = input_image;
     frame.m_image_corrected = corrected_frame;
@@ -148,7 +154,8 @@ void Tracker::trackNewFrame(cv::Mat input_image,double gt_exp_time)
     }
     
     m_database->m_tracked_frames.push_back(frame);
-    
+
+//[ ***step 6*** ] 提取新的特征点, 加入到 database 的帧中
     // Extract new features
     std::vector<cv::Point2f> new_feature_locations = extractFeatures(input_image,m_database->fetchActiveFeatureLocations());
     std::vector<int> new_validity_vector = checkLocationValidity(new_feature_locations);
@@ -174,6 +181,8 @@ void Tracker::trackNewFrame(cv::Mat input_image,double gt_exp_time)
     }
 }
 
+//* 在旧的特征点外提取新的点, 使用10*10的网格来划分, 在空的内提取, 
+//bug 这里可以改进改进
 // Todo: change both types to reference
 std::vector<cv::Point2f> Tracker::extractFeatures(cv::Mat frame,std::vector<cv::Point2f> old_features)
 {
@@ -294,6 +303,7 @@ std::vector<cv::Point2f> Tracker::extractFeatures(cv::Mat frame,std::vector<cv::
 /**
  * Note: For this function, it is assumed that x,y lies within the image!
  */
+//* 双线性插值
 double Tracker::bilinearInterpolateImage(cv::Mat image,double x,double y)
 {
     double floor_x = std::floor(x);
@@ -322,9 +332,11 @@ double Tracker::bilinearInterpolateImage(cv::Mat image,double x,double y)
     return w1*i1 + w2*i2 + w3*i3 + w4*i4;
 }
 
+
 /**
  * Note: For this function, it is assumed that x,y lies within the image!
  */
+//* 对 patch 内的每一个进行插值
 std::vector<double> Tracker::bilinearInterpolateImagePatch(cv::Mat image,double x,double y)
 {
     std::vector<double> result;
@@ -341,12 +353,14 @@ std::vector<double> Tracker::bilinearInterpolateImagePatch(cv::Mat image,double 
     return result;
 }
 
+//* 判断下是不是在合理的区域内, 因为要取patch
 // Todo: change return to parameter passed by ref
 std::vector<int> Tracker::checkLocationValidity(std::vector<cv::Point2f> points)
 {
     // Check for each passed point location if the patch centered around it falls completely within the input images
     // Return 0 for a point if not, 1 if yes
     
+    // 图像向内缩小一个边缘
     int min_x = m_patch_size+1;  //Todo: should be m_patch_size?
     int min_y = m_patch_size+1;
     
@@ -370,6 +384,7 @@ std::vector<int> Tracker::checkLocationValidity(std::vector<cv::Point2f> points)
     return is_valid;
 }
 
+//* 初始提取特征点, 创建feature 和 frame, 是在原图像上提取的
 // Todo: change parameter type to reference (or const reference)
 void Tracker::initialFeatureExtraction(cv::Mat input_image,cv::Mat gradient_image,double gt_exp_time)
 {
@@ -407,6 +422,7 @@ void Tracker::initialFeatureExtraction(cv::Mat input_image,cv::Mat gradient_imag
     m_database->m_tracked_frames.push_back(frame);
 }
 
+//* 求像素梯度
 void Tracker::computeGradientImage(cv::Mat input_image,cv::Mat &gradient_image)
 {
     // Blur the input image a little and apply discrete 3x3 sobel filter in x,y directions to obtain a gradient estimate
@@ -415,6 +431,7 @@ void Tracker::computeGradientImage(cv::Mat input_image,cv::Mat &gradient_image)
     cv::GaussianBlur( input_image, blurred_image, cv::Size(3,3), 0, 0, cv::BORDER_DEFAULT );
     // Todo: change to class member
     cv::Mat grad_x,grad_y;
+    // dx, dy, kernel大小
     cv::Sobel( blurred_image, grad_x, CV_16S, 1, 0, 3, 1.0, 0, cv::BORDER_DEFAULT );
     cv::Sobel( blurred_image, grad_y, CV_16S, 0, 1, 3, 1.0, 0, cv::BORDER_DEFAULT );
     cv::convertScaleAbs( grad_x, grad_x );
@@ -422,6 +439,7 @@ void Tracker::computeGradientImage(cv::Mat input_image,cv::Mat &gradient_image)
     cv::addWeighted( grad_x, 0.5, grad_y, 0.5, 0, gradient_image );
 }
 
+//* 利用 database 去除图像的f和V
 void Tracker::photometricallyCorrectImage(cv::Mat &corrected_frame)
 {
     for(int r = 0;r < corrected_frame.rows;r++)

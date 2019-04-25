@@ -76,7 +76,7 @@ private:
      * Patchsize extracted around the tracked points 
      * (not the one used for KLT tracking optimization)
      */
-    int m_patch_size;
+    int m_patch_size;  //! 注意下这个和 KLT patch 的区别
     
     /**
      * Number of active features aimed at when tracking

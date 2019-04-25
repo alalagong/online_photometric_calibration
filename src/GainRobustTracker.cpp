@@ -266,7 +266,7 @@ double GainRobustTracker::trackImageExposurePyr(cv::Mat old_image,
         //std::cout << -W.t()*U_INV*V+m << std::endl;
         //std::cout << K_MAT << std::endl;
         
-//[ ***step 4*** ] 
+//[ ***step 4*** ] 得到 K 之后, 逐个求解dx,dy
         // Solve for the displacements
         absolute_point_index = -1;
         for(int p = 0;p < nr_points;p++)

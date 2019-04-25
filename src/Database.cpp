@@ -164,6 +164,7 @@ void Database::visualizeRapidExposureTimeEstimates(double exponent)
 
 }
 
+//* 得到上一帧中的特征点
 // Todo: change the return to parameter passed by reference
 std::vector<cv::Point2f> Database::fetchActiveFeatureLocations()
 {
